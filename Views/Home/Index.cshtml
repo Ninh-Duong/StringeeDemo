@@ -1,0 +1,254 @@
+﻿@{
+    ViewData["Title"] = "Stringee Call";
+}
+<link rel="stylesheet" type="text/css" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css" />
+<h1>Make a call with Stringee</h1>
+
+<input type="text" id="toNumber" placeholder="Enter phone number">
+<button type="button" onclick="makeCall('normal')">Call</button>
+<button type="button" onclick="endCall()">End Call</button>
+
+<h2>Download Call Recording</h2>
+<input type="text" id="callId" placeholder="Enter Call ID">
+<button type="button" onclick="downloadRecording()">Download Record</button>
+
+
+ <div id="incoming-call-notice" style="display: none;">
+       <div class="spinner-grow text-primary" role="status"  >
+           <span class="sr-only">Incoming call...</span>
+       </div>
+       <h3>Incoming call...</h3>
+</div>
+<script type="text/javascript" src="https://cdn.stringee.com/sdk/web/latest/stringee-web-sdk.min.js"></script>
+
+<script type="text/javascript">
+
+    let currentToken = "";
+    let activeCall = null;
+    let isClientConnected = false;
+    let callId = "";
+
+    const STRINGEE_SERVER_ADDRS = [
+        "wss://v1.stringee.com:6899/",
+        "wss://v2.stringee.com:6899/"
+    ];
+    var stringeeClient = new StringeeClient(STRINGEE_SERVER_ADDRS);
+
+    const fromNumbers = [
+        { alias: 'Number-1', number: '842871020549' }
+    ];
+
+    document.addEventListener("DOMContentLoaded", function () {
+
+        //getTokenAndConnect('test_user', 1);
+        getTokenAndConnect('user1', 1);
+    });
+
+    stringeeClient.on('connect', function () {
+       console.log('Connected to Stringee Server');
+
+       isClientConnected = true;
+    });
+
+    stringeeClient.on('authen', function (res) {
+        console.log('authen: ', res);
+    });
+
+    stringeeClient.on('disconnect', function () {
+        console.log('Disconnected from Stringee Server');
+        isClientConnected = false;
+    });
+
+    stringeeClient.on('incomingcall', function (incomingcall) {
+         console.log('incomingcall:', incomingcall);
+        $('#incoming-call-notice').show();
+
+        window.currentIncomingCall = incomingcall;
+
+        incomingcall.on('signalingstate', function (state) {
+            console.log('status state:', state);
+        });
+    });
+
+    // stringeeClient.on('incomingcall', function (incomingcall) {
+    //     console.log('incomingcall', incomingcall);
+    //     $('#incoming-call-notice').show();
+    // });
+
+    stringeeClient.on('error', function (err) {
+        console.error("Connection error with Stringee:", err);
+    });
+
+    async function getTokenAndConnect(userId, tokenActionType) {
+        try {
+            const requestData = {
+                userId: userId,
+                actionType: tokenActionType
+            };
+
+            const response = await fetch(`/api/stringee/generate_token`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(requestData)
+            });
+
+            if (!response.ok) {
+                console.error(error);
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+
+            currentToken = await response.text();
+            console.log("Token:", currentToken);
+
+            stringeeClient.connect(currentToken);
+            return currentToken
+
+        } catch (error) {
+            console.error("Error while fetching token:", error);
+        }
+    }
+
+    function makeCall(type) {
+        if (!isClientConnected) {
+            console.error("Stringee Client is not connected.");
+            return;
+        }
+
+        const toNumber = document.getElementById("toNumber").value.trim();
+        if (!toNumber) {
+            console.error("Please enter a phone number.");
+            return;
+        }
+
+        const fromNumber = fromNumbers.length > 0 ? fromNumbers[0] : null;
+        if (!fromNumber) {
+            console.error("No valid fromNumber available.");
+            return;
+        }
+
+        console.log(`📞 Calling from: ${fromNumber.number} to: ${toNumber}`);
+
+        activeCall = new StringeeCall(stringeeClient, fromNumber.number, toNumber, false);
+
+        activeCall.makeCall(function (res) {
+
+            console.log('makeOutgoingCallBtnClick: fromNumber=' + fromNumber.number + ', toNumber=' + toNumber);
+
+            if (res.r == 0) {
+                console.log("Call started:", res);
+                callId = res.callId;
+                console.log(callId);
+               
+                return res.message;
+            } else { 
+                const message = `Unable to make the call: ${res.message}`;
+                console.error(message);
+                console.log(message);
+                return res.message;
+            }
+        });
+
+        activeCall.on('signalingstate', function (state) {
+            console.log('signalingstate ', state);
+
+            if (state.code === 6 || state.code === 5)
+            {
+                callButton.show();
+                endCallButton.hide();
+                rejectCallButton.hide();
+                answerCallButton.hide();
+                localVideo.srcObject = null;
+                remoteVideo.srcObject = null;
+                $('#incoming-call-notice').hide();
+            }
+        });
+
+        activeCall.on('mediastate', function (state) {
+            console.log('mediastate ', state);
+        });
+
+        activeCall.on('info', function (info) {
+            console.log('on info:' + JSON.stringify(info));
+        });
+    }
+
+    async function login() {
+        try {
+            const body = {
+                email: "heoninh47@gmail.com",
+                password: "",
+            }
+
+            const response = await fetch('/api/stringee/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(body)
+            });
+
+            if (!response.ok) {
+                throw new Error('Login failed');
+            }
+
+            const data = await response.json();
+            const token = data.token;
+;           
+            return token;
+        } catch (error) {
+            console.error('Error during login:', error);
+        }
+    }
+
+    async function endCall() {
+
+        if (activeCall) {
+            activeCall.hangup(async function(res) {
+                if (res.r != 0) {
+                    console.error("Error ending the call:", res.message);
+                } else {
+
+                    console.log("Call ended:", res);
+
+                    activeCall = null;
+                }
+            });
+        } else {
+            console.error("No ongoing call to end.");
+        }
+    }
+
+     async function downloadRecording() {
+        const callIdCheck = document.getElementById("callId").value.trim();
+        const token = await getTokenAndConnect('test_user', 2);
+        console.log(token);
+        if (!callIdCheck || !token) {
+            console.error("Call ID and Access Token are required.");
+            return;
+        }
+
+        const response = await fetch(`/api/stringee/download-recording?callId=${callId}&accessToken=${token}`, {
+            method: 'GET',
+        });
+
+        if (response.ok) {
+            console.log('ngon ngon');
+
+            const data = await response.blob();
+            const urlTMP = window.URL.createObjectURL(data);
+            console.log(urlTMP);
+            const a = document.createElement('a');
+            a.href = urlTMP;
+            a.download = `recording_${callId}.mp3`; 
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+
+        } else {
+            const errorDetails = await response.text(); 
+            console.error(`Failed to download the recording: ${response.status} - ${errorDetails}`);
+        }
+    }
+</script>
